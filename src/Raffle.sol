@@ -9,6 +9,7 @@ import {VRFV2PlusClient} from "chainlink/contracts/src/v0.8/vrf/dev/libraries/VR
 error Raffle__NotEnoughEthSent();
 error Raffle__TransferFailed();
 error Raffle__NotOpen();
+error Raffle__UpkeepNotNeeded(uint256 balance, uint256 playersLength, uint256 raffleState);
 
 /**
  * @title A simple raffle contract for the Patric Collins Foundry Fundamentals course
@@ -16,7 +17,6 @@ error Raffle__NotOpen();
  * @notice Users will be able to get a ticket, and possibly win.
  */
 contract Raffle is VRFConsumerBaseV2Plus {
-
     /* Type Declarations */
     enum RaffleState {
         OPEN,
@@ -64,6 +64,19 @@ contract Raffle is VRFConsumerBaseV2Plus {
         s_raffleState = RaffleState.OPEN;
     }
 
+    function checkUpkeep(bytes memory /* checkData */ )
+        public
+        view
+        returns (bool upkeepNeeded, bytes memory /* performData */ )
+    {
+        bool isOpen = RaffleState.OPEN == s_raffleState;
+        bool timePassed = ((block.timestamp - s_lastTimeStamp) >= i_interval);
+        bool hasPlayers = s_players.length > 0;
+        bool hasBalance = address(this).balance > 0;
+        upkeepNeeded = (timePassed && isOpen && hasBalance && hasPlayers);
+        return (upkeepNeeded, "0x0");
+    }
+
     function enterRaffle() external payable {
         //require(msg.value >= i_entranceFee, "You need to send more ETH to paricipate");
         if (msg.value < i_entranceFee) revert Raffle__NotEnoughEthSent();
@@ -72,9 +85,12 @@ contract Raffle is VRFConsumerBaseV2Plus {
         emit EnterredRaffle(msg.sender);
     }
 
-    function pickWinner() public {
+    function performUpkeep(bytes calldata /* performData */) external {
         if (block.timestamp - s_lastTimeStamp < i_interval) revert();
         if (s_raffleState == RaffleState.CALCULATING) revert Raffle__NotOpen();
+
+        (bool upkeepNeeded,) = checkUpkeep(bytes(""));
+        if (!upkeepNeeded) revert Raffle__UpkeepNotNeeded(address(this).balance, s_players.length, uint256(s_raffleState));
 
         s_raffleState = RaffleState.CALCULATING;
 
@@ -88,7 +104,6 @@ contract Raffle is VRFConsumerBaseV2Plus {
                 extraArgs: VRFV2PlusClient._argsToBytes(VRFV2PlusClient.ExtraArgsV1({nativePayment: false}))
             })
         );
-        
     }
 
     function fulfillRandomWords(uint256 requestId, uint256[] calldata randomWords) internal virtual override {
